@@ -1,8 +1,8 @@
-# 单台 AP 试用弱信号拒绝接入
+# 可选实验：已有管理员 shell 的单台 AP 引导试用
 
-本页用于试验**接入前的 −75 dBm 门槛**，需要重启测试 AP。若只想看哪些已连接终端低于 −82 dBm，可直接按[观察与剔除步骤](getting-started.md#observe)操作，原厂驱动即可开始观察。
+本页是公开版的一次性实验，需要现成的 AP 管理员 shell、文件传输通道和一次重启。原厂设备从 Web 管理后台完成的实际部署见[现场记录](getting-started.md)。若已有 shell，只想看哪些已连接终端低于 −82 dBm，可直接按[观察与剔除步骤](shell-lab.md#observe)操作，原厂驱动即可开始观察。
 
-请先按[构建步骤](getting-started.md#build)从自己的 AP 取得 `umac.stock.ko` 并生成 `patched.ko`，两者放在电脑的仓库根目录。下文用两个终端。**电脑**运行 Windows PowerShell，负责文件传输；**AP**运行已授权的 root shell，负责检查和启停。试用时保留有线管理连接，提前导出当前配置并把备份留在电脑上。确认知道设备无法通过 Wi-Fi 管理时怎样经有线或本地控制台恢复。
+请先按[构建步骤](shell-lab.md#build)从自己的 AP 取得 `umac.stock.ko` 并生成 `patched.ko`，两者放在电脑的仓库根目录。下文用两个终端。**电脑**运行 Windows PowerShell，负责文件传输；**AP**运行已授权的 root shell，负责检查和启停。试用时保留有线管理连接，提前导出当前配置并把备份留在电脑上。确认知道设备无法通过 Wi-Fi 管理时怎样经有线或本地控制台恢复。
 
 ## 1. AP：确认能用这个启动钩子
 
@@ -131,7 +131,7 @@ cfg80211tool "$TEST_VAP" min_asoc_rssi -75
 cfg80211tool "$TEST_VAP" g_min_asoc_rssi
 ```
 
-预期回读类似 `ath0  g_min_asoc_rssi:-75`。先在强信号下用测试终端连接该 BSSID 并收发数据，再移动至弱信号位置做[关联拒绝与漫游的区分测试](verification.md)。需要同时试验在线剔除时，按[入门教程](getting-started.md#observe)另行运行 Lua 脚本。一次重启会清空 AP 的 `/tmp`，此前仅放在该目录的 Lua 脚本需要重新上传。
+预期回读类似 `ath0  g_min_asoc_rssi:-75`。先在强信号下用测试终端连接该 BSSID 并收发数据，再移动至弱信号位置做[关联拒绝与漫游的区分测试](verification.md)。需要同时试验在线剔除时，按[shell 实验教程](shell-lab.md#observe)另行运行 Lua 脚本。一次重启会清空 AP 的 `/tmp`，此前仅放在该目录的 Lua 脚本需要重新上传。
 
 ## 6. 退出试用与恢复原厂
 

@@ -1,0 +1,13 @@
+__pycache__/
+.venv/
+.pytest_cache/
+*.py[cod]
+*.ko
+*.bin
+*.img
+*.cf
+*.pcap
+*.pcapng
+*.log
+.env
+build/

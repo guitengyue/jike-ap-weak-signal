@@ -1,79 +1,66 @@
-# 可选实验：已有管理员 shell 时怎样试用公开工具
+# 已有管理员 shell 时，怎样试用公开工具
 
-**适用前提：你已能在测试 AP 上执行管理员命令，并有可用的文件传输通道。** 本页以已配置 SSH 的测试环境为例。原厂设备实装用的是经过认证的 Web 管理通道，具体经过和公开仓库覆盖到哪一步见[原厂 AP 实际部署记录](getting-started.md)。
+同一台 AP 上可以分开试两件事：
 
-第一次建议只拿**一台 AP、一个业务 SSID、一台可以暂时断网的测试终端**。只想剔除已连接的弱信号终端，做到第 3 步就够了；需要在新终端接入前拒绝，再做第 4 步和单次启动试用。
+- **已连上的终端太弱，想看看谁会被踢** → [观察，按需启用剔除](#observe)。原厂驱动即可，约 10 秒能看完第一组结果。
+- **想在弱信号终端连进来之前拒绝它** → [从自己的原厂模块构建补丁](#build)。可以直接做这一项。构建在电脑上完成，装载才需要重启 AP。
+
+本页适用于已经有 **AP 管理员 shell 和文件传输通道** 的读者。示例用 Windows PowerShell、已配置的 SSH 和 SCP。仅有原厂网页账号的读者，请看[通过 Web 管理后台完成的实装记录](getting-started.md)。
 
 <a id="prepare"></a>
-## 1. 在电脑上下载，确认能登录 AP
+## 开始前：电脑上备好仓库和地址
 
-**电脑 · PowerShell**　从 GitHub 的 **Code → Download ZIP** 下载并解压，在包含 `README.md` 和 `tools` 的文件夹打开 PowerShell。装有 Git 的电脑也可以用：
+从 GitHub 的 **Code → Download ZIP** 下载、解压，在能看到 `README.md` 和 `tools` 的目录打开 PowerShell。用 Git 也可以：
 
 ```powershell
 git clone https://github.com/guitengyue/jike-ap-weak-signal.git
 cd jike-ap-weak-signal
 ```
 
-确认能找到脚本，再登录**准备测试的那台 AP**。下面假定你已有合法的 `root` 管理权限，并使用默认 SSH 端口。
+**电脑 · PowerShell**　选一台测试 AP，记下其管理页显示的型号和完整固件构建号，再填写这台 AP 自己的地址。下面的电脑命令都在这个窗口执行；新开窗口时要切回仓库目录并重设 `$Ap`。
 
 ```powershell
 Get-Item .\tools\rssi_kick.lua
-$Ap = Read-Host '输入测试 AP 自己的管理 IP 或主机名'
+$Ap = Read-Host '测试 AP 的管理 IP 或主机名'
+```
+
+首次 SSH 或 SCP 连接时核对主机指纹。如果 AP 已提供其他管理员文件传输通道或本地控制台，也可以按文中的目标路径上传，并在控制台执行标为“AP”的命令。
+
+<a id="observe"></a>
+## A. 观察已连接终端
+
+**电脑 · PowerShell**　上传脚本并打开 AP shell。脚本放在临时目录，重启后需要重新上传。
+
+```powershell
+scp .\tools\rssi_kick.lua "root@${Ap}:/tmp/rssi_kick.lua"
 ssh "root@$Ap"
 ```
 
-**AP · shell**　登录后运行以下只读检查。后续启用剔除需要 `id -u` 输出 `0`。记录 AP 网页上显示的型号和完整固件构建号，核对 [README 兼容表](../README.md)。本项目验证过的内核版本为 `4.4.60`。
+**AP · shell**　检查权限和固件自带的工具。要启用剔除，`id -u` 应输出 `0`。最后一行应打印 `Lua dependencies OK`。
 
 ```sh
 id -u
-uname -r
 command -v lua
 ls -l /usr/sbin/iw /usr/sbin/cfg80211tool
 lua -e 'assert(require("uci").cursor); assert(require("iwinfo").qcawifi.assoclist); assert(require("nixio").nanosleep); print("Lua dependencies OK")'
 ```
 
-最后一行应该打印 `Lua dependencies OK`。如果 SSH 提示连接被拒绝，先向设备管理员确认 shell 的可用方式；网页密码可用也不代表 SSH 已开放。只有网页访问权限时，到这里停止设备端操作。
-
-## 2. 在 AP 上找接口，再上传脚本
-
-**AP · shell**
+**AP · shell**　让测试终端连上你准备观察的 Wi-Fi。在下面两条命令的输出里，找出同时满足三个条件的接口：SSID 是测试网络，类型为 `AP`，接口名也出现在 `br-lan` 的成员列表。双频共用一个 SSID 时看 `channel` 的频率。跳过 Mesh、救援和无线回程接口。
 
 ```sh
 iw dev
 ls /sys/class/net/br-lan/brif/
 ```
 
-在 `iw dev` 输出中，找到 **SSID 与测试 Wi-Fi 名称一致**、`type AP` 的一组，再读它上方的 `Interface`。用 `channel` 后面的频率区分同名 SSID 的两个频段。选中的接口也应在第二条命令的 LAN 网桥成员列表里。跳过 SOS、Mesh 回程和 `type managed` 的接口。各型号的接口编号可能不同。
-
-假设查到的是 `ath0`。再核对一次，并在 AP 的临时目录准备上传位置：
+下例假定查到的接口叫 `ath0`；请替换成你自己的。再看一次接口信息，确认后开始观察。测试终端持续发送一些数据，AP 才有新读数可看。
 
 ```sh
 TEST_VAP=ath0
 iw dev "$TEST_VAP" info
-mkdir -p /tmp/rssi-guide
-exit
+lua /tmp/rssi_kick.lua --iface "$TEST_VAP" --threshold -82 --once --dry-run
 ```
 
-**电脑 · PowerShell**　现在回到了刚才设置 `$Ap` 的窗口。上传仓库自带的 Lua 文件，再次登录 AP：
-
-```powershell
-scp .\tools\rssi_kick.lua "root@${Ap}:/tmp/rssi-guide/rssi_kick.lua"
-ssh "root@$Ap"
-```
-
-如果设备已有其他管理员文件传输方式，可以用它把同一文件放到同一路径。如果 SCP 提示缺少 SFTP 子系统，先确认设备已提供旧式 SCP 服务；确认后可把上条命令的 `scp` 改为 `scp -O`。下面的 `/tmp` 文件在 AP 重启后需要重新上传。
-
-<a id="observe"></a>
-## 3. 先观察三轮，再选择是否开始剔除
-
-**AP · shell**　这是一次新登录，重新设置接口变量，把 `ath0` 换成第 2 步核实的名字。让测试终端连上该 SSID，保持少量上行流量。
-
-```sh
-TEST_VAP=ath0
-lua /tmp/rssi-guide/rssi_kick.lua --iface "$TEST_VAP" --threshold -82 --once --dry-run
-```
-
-默认每 5 秒采一次，共三轮，约 10 秒后返回命令行。以下是**示例**：一台终端在三轮里都提供了新的低信号读数。
+约 10 秒内会打印三行。下面的例子表示第三轮已出现一个可剔除的候选，观察模式会让它继续连接：
 
 ```text
 mode=observe readable_vaps=1 fresh=1 weak=1 eligible=0 threshold=-82
@@ -81,76 +68,75 @@ mode=observe readable_vaps=1 fresh=1 weak=1 eligible=0 threshold=-82
 mode=observe readable_vaps=1 fresh=1 weak=1 eligible=1 threshold=-82
 ```
 
-| 字段 | 怎么看 |
-| --- | --- |
-| `readable_vaps` | 通过接口和关联表检查的数量。只选一个接口时应为 `1`；连续为 `0`，先查下方故障表。 |
-| `fresh`、`weak` | 本轮有可用近期活动读数的非豁免终端数，以及其中低于门槛的数量。接口可读而 `fresh=0` 很常见，例如终端正在休眠。 |
-| `eligible` | 已连续积累三个新低读数且不在冷却期的终端数。`mode=observe` 时即使这里大于零也不会下发断开。 |
+- `readable_vaps=1`：已读到这个业务接口的关联表。`fresh=0` 表示这轮没有符合条件的近期活动读数，例如终端正在休眠。
+- `weak` 是低于 −82 dBm 的非豁免终端数。`eligible` 还要求同一连接有三次新的低读数，并且已过冷却期。恰好 −82 dBm 时保留连接。
 
-确认业务接口和读数都正确后，才切到执行模式。以下命令在前台持续运行：
+<a id="kick"></a>
+### 需要实际剔除时
+
+**AP · shell**　确认选对接口后，在同一窗口以前台方式持续执行。若有需要保护的设备，**启动前**就在命令末尾加上 `--protect 00:00:5e:00:53:01`，并将示例 MAC 换成该设备实际使用的 Wi-Fi 地址。
 
 ```sh
-lua /tmp/rssi-guide/rssi_kick.lua --iface "$TEST_VAP" --threshold -82 --loop --apply
+lua /tmp/rssi_kick.lua --iface "$TEST_VAP" --threshold -82 --loop --apply
 ```
 
-看到 `mode=apply` 表示进入执行模式。程序会先复查信号与关联身份，每轮最多处理一台。日志 `result=association-absent` 表示复查时终端已离开原接口；`still-associated` 表示仍在原接口；`unverified` 表示未能确认断开结果。一次尝试后，对同一 MAC 有 180 秒冷却时间。
+`mode=apply` 表示已启用。每轮最多处理一个终端；断开前会再读一次信号和关联身份。日志中的 `result=association-absent` 表示终端已离开原接口，`still-associated` 表示它仍在，`unverified` 表示结果未能确认。一次尝试后对同一 MAC 冷却 180 秒。
 
-- **加第二个接口**：在同一条命令里重复 `--iface`，例如 `--iface ath0 --iface ath1`。先逐个观察，确认两个都是目标业务接口。
-- **保护固定设备**：在命令末尾加 `--protect 00:00:5e:00:53:01`，并把文档示例地址替换成该终端在 Wi-Fi 下实际使用的 MAC。可重复 `--protect` 添加多台。
-- **停止或改阈值**：按 `Ctrl+C` 停止。要改门槛，先用新值运行 `--once --dry-run`，确认后再开 `--loop --apply`。公开脚本需要由这个前台进程持续运行；以上步骤不会创建开机服务。
+按 **Ctrl+C** 停止剔除，输入 `exit` 回电脑。要换门槛，先用新值重新观察。多接口可在**一个进程**中重复写 `--iface`，多台受保护终端可重复写 `--protect`。这套用法只在前台进程运行期间生效。
 
 <a id="build"></a>
-## 4. 可选：构建“弱信号拒绝接入”模块
+## B. 离线构建拒绝弱信号接入的补丁
 
-如果只需要第 3 步的剔除，可跳过本节。要启用接入门槛，先从测试 AP 的管理页导出配置，确认通过**网线或控制台**也能管理和恢复这台 AP。在另一台设备或另一个固件版本上试用时，应重新从那台设备取原件。
+准备一台可以重启、有线管理或控制台可用的测试 AP，从管理页导出配置，留在电脑上。打开前面[准备好的 PowerShell](#prepare)；如果刚才在 AP 上运行了剔除脚本，先 Ctrl+C 并 `exit`。
 
-**AP · shell**　停止前台剔除程序后，读取原厂只读分区中的模块指纹，然后返回电脑：
-
-```sh
-sha256sum /rom/lib/modules/4.4.60/umac.ko
-exit
-```
-
-| 型号与固件 | 原厂 `umac.ko` 的 SHA-256 |
-| --- | --- |
-| AX1800MI / AX5RM · 7.1_2022032400 | `54171772269e778d3133174dcb6e5d677539e501a1cef2c975ca6a61fbda2319` |
-| N3000 · 7.2_2022111500 | `f8f83ac4c34a3eacbd32126785ed0cf61ff945eda09044335192c9fd2e25e0cc` |
-| N3000 · 8.0_2024061700 | `9ece3e2c6bef524d0ee78fdc4af8363f44618e2b22978ad135631ca9b926cb50` |
-
-**只有完整指纹一致才继续。** 在电脑的仓库根目录使用一个全新的构建位置；以下示例假定其中还没有 `umac.stock.ko` 和 `patched.ko`。用 SCP 复制二进制原件，并确认下载后的指纹与上表、AP 输出一致。
-
-**电脑 · PowerShell**
+**电脑 · PowerShell**　下面第一条命令通过已有 SSH 只读查询 AP。确认内核为 `4.4.60`，并按下方清单逐字核对原厂模块的 SHA-256。型号、构建或哈希不匹配时停止试用。
 
 ```powershell
-if ((Test-Path .\umac.stock.ko) -or (Test-Path .\patched.ko)) { throw '请改用干净的仓库工作副本，以免混用原件或输出。' }
+ssh "root@$Ap" 'uname -r; sha256sum /rom/lib/modules/4.4.60/umac.ko'
+```
+
+<details>
+<summary>查看支持的三个原厂模块指纹</summary>
+
+- AX1800MI / AX5RM · `7.1_2022032400`<br>
+  `54171772269e778d3133174dcb6e5d677539e501a1cef2c975ca6a61fbda2319`
+- N3000 · `7.2_2022111500`<br>
+  `f8f83ac4c34a3eacbd32126785ed0cf61ff945eda09044335192c9fd2e25e0cc`
+- N3000 · `8.0_2024061700`<br>
+  `9ece3e2c6bef524d0ee78fdc4af8363f44618e2b22978ad135631ca9b926cb50`
+
+</details>
+
+**电脑 · PowerShell**　把原件下载到仓库目录，给本机副本计算哈希，并与 AP 刚输出的值对照。首次试用请用本地 NTFS 等支持硬链接的磁盘，并使用没有同名输入、输出文件的工作副本。
+
+```powershell
+if ((Test-Path .\umac.stock.ko) -or (Test-Path .\patched.ko)) { throw '已有同名文件，请换用干净的工作副本' }
 scp "root@${Ap}:/rom/lib/modules/4.4.60/umac.ko" .\umac.stock.ko
 (Get-FileHash .\umac.stock.ko -Algorithm SHA256).Hash.ToLowerInvariant()
 ```
 
-构建在电脑上完成，AP 上无需安装 Python。以下命令使用 Windows 的 Python 3 启动器；若电脑只有 `python` 命令，可用 `python -m venv .venv` 创建环境。
+仍在**电脑**上创建 Python 3 环境。若你的 Windows 只有 `python` 命令，用 `python -m venv .venv` 代替第一行。
 
 ```powershell
 py -3 -m venv .venv
 & .\.venv\Scripts\python.exe -m pip install keystone-engine==0.9.2
+```
+
+运行下面一条命令生成补丁。如果要豁免一台固定设备，在**首次构建时**给这条命令追加 `--exempt-mac 00:00:5e:00:53:01`，将示例 MAC 换成该终端的 Wi-Fi 地址。接入侧支持一个豁免地址；同时启用剔除时，也要在 A 的脚本中为同一设备设置 `--protect`。
+
+```powershell
 & .\.venv\Scripts\python.exe .\tools\build_umac.py .\umac.stock.ko .\patched.ko
 ```
 
-**需要接入豁免时**，将上面最后一条构建命令换成下面这条，用你自己的终端 MAC。构建器接受一台豁免设备；它只跳过新增的接入信号检查。若还运行第 3 步的剔除程序，记得给那条命令传入相同的 `--protect`。
+成功时会打印匹配的机型、`Stock SHA-256`、`Patched SHA-256` 和 `Wrote ... bytes to patched.ko`。保存两项摘要；到这里仅在电脑生成了文件。接下来按[单次启动试用与恢复](boot-trial.md)上传、校验、重启并设置目标业务接口的接入门槛。验证手机究竟被拒接还是自行漫游，见[空口验证方法](verification.md)。
 
-```powershell
-$ProtectedMac = Read-Host '输入需要保护的 Wi-Fi 终端 MAC，使用冒号分隔'
-& .\.venv\Scripts\python.exe .\tools\build_umac.py .\umac.stock.ko .\patched.ko --exempt-mac $ProtectedMac
-```
+<details>
+<summary>常见卡点</summary>
 
-成功时会打印型号、`Stock SHA-256`、`Patched SHA-256` 和 `Wrote ... bytes to patched.ko`。保存这两项摘要。**生成文件时 AP 仍在运行原来的驱动。** 下一步按[单次启动试用与回退](boot-trial.md)上传文件、校验、单次装载，再设置和读回 `-75`。要判断一次真实连接是否因门槛被拒绝，见[空口验证步骤](verification.md)。
+- **SSH 被拒绝或 SCP 找不到 SFTP 子系统。** 先确认 AP 已开放相应管理服务。如果设备只提供旧式 SCP，可在电脑端改用 `scp -O`。只有网页访问权限时，请阅读[原厂实装流程](getting-started.md)。
+- **`cannot open ...rssi_kick.lua`。** 在 AP 上执行 `ls -l /tmp/rssi_kick.lua`；脚本须先传入，重启后要重传。
+- **`readable_vaps=0`。** 核对业务接口在 UCI 中有唯一配置，`ifname` 和 `athname` 一致，`mode=ap`、`network=lan`、`hidden=0`，且无线设备已启用。脚本还会比对实时 SSID 和 LAN 网桥成员。
+- **`another apply process holds the lock`。** 先停掉自己的旧进程，再用一个进程管理所有选定接口；不要重复启动。
+- **`Unsupported stock SHA-256` 或输出已存在。** 前者请重新核对原件与构建号；后者请检查已有文件或换用干净的工作副本。构建器会保留已有输出。
 
-## 卡在哪一步时看这里
-
-| 现象 | 下一步 |
-| --- | --- |
-| `cannot open ...rssi_kick.lua` | 在 AP 执行 `ls -l /tmp/rssi-guide/rssi_kick.lua`。若刚重启或传错路径，回到第 2 步重新上传。 |
-| Lua 报 `module ... not found` | 用第 1 步的依赖检查定位缺失模块，核对 AP 固件和执行环境，先停在观察阶段。 |
-| `readable_vaps=0` | 重新核对 `iw dev` 的实际 SSID、类型、接口名和 `br-lan` 成员。脚本还检查该接口有唯一的 UCI 业务配置、`ifname` 与 `athname` 一致、`mode=ap`、`network=lan`、`hidden=0`，并排除禁用、WDS、Mesh、回程和救援接口。 |
-| `another apply process holds the lock...` | 检查先前运行的执行进程。双频应由同一进程指定两个 `--iface`；先停止自己的旧进程再启动新进程。 |
-| `Unsupported stock SHA-256` 或输出文件已存在 | 前者应停在原厂驱动并复核原件；后者应核对已有输出或另取新文件名。构建器会拒绝覆盖，输出目录需要支持硬链接，例如本地 NTFS。 |
-| 能读回 `-75`，手机却仍有 Wi-Fi | 看手机实际连接的 BSSID。原厂也可能接受参数，先复查本次引导的挂载和哈希，再核对目标 BSSID 的关联响应。 |
+</details>
